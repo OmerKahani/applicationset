@@ -121,6 +121,7 @@ spec:
                     required:
                     - repoURL
                     - revision
+                    - requeueAfterSeconds
                     type: object
                   list:
                     description: ListGenerator include items info
