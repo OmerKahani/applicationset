@@ -22,18 +22,19 @@ import (
 	"github.com/argoproj-labs/applicationset/pkg/generators"
 	"github.com/argoproj-labs/applicationset/pkg/utils"
 	argov1alpha1 "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
+	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/apis/core"
+	"reflect"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/source"
-
-	log "github.com/sirupsen/logrus"
-	"k8s.io/apimachinery/pkg/runtime"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"time"
 
 	argoprojiov1alpha1 "github.com/argoproj-labs/applicationset/api/v1alpha1"
 )
@@ -43,7 +44,7 @@ type ApplicationSetReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
-	Generators []generators.Generator
+	Generators map[string]generators.Generator
 	utils.Renderer
 }
 
@@ -78,7 +79,46 @@ func (r *ApplicationSetReconciler) Reconcile(req ctrl.Request) (ctrl.Result, err
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{
+	//	RequeueAfter: getMinRequeueAfter(&applicationSetInfo),
+	}, nil
+}
+
+func (r *ApplicationSetReconciler) GetRelevantGenerators(requestedGenerator *argoprojiov1alpha1.ApplicationSetGenerator) []generators.Generator{
+	var res []generators.Generator
+
+	v := reflect.Indirect(reflect.ValueOf(requestedGenerator))
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		if !field.CanInterface() {
+			continue
+		}
+
+		if !reflect.ValueOf(field.Interface()).IsNil()  {
+			fmt.Println(reflect.Indirect(reflect.ValueOf(field.Interface())).Type())
+			res = append(res, r.Generators[v.Type().Field(i).Name])
+		}
+	}
+
+	return res
+}
+
+func (r *ApplicationSetReconciler) getMinRequeueAfter(applicationSetInfo *argoprojiov1alpha1.ApplicationSet) time.Duration{
+	var res time.Duration
+	for _, requestedGenerator := range applicationSetInfo.Spec.Generators {
+
+		generators := r.GetRelevantGenerators(&requestedGenerator)
+
+		for _, g := range generators {
+			t := g.GetRequeueAfter(&requestedGenerator)
+
+			if res != 0 && t != 0 && t < res {
+				res = t
+			}
+		}
+	}
+
+	return res
 }
 
 func getTempApplication(applicationSetTemplate argoprojiov1alpha1.ApplicationSetTemplate) *argov1alpha1.Application{
@@ -97,7 +137,10 @@ func (r *ApplicationSetReconciler) generateApplications(applicationSetInfo argop
 	var firstError error
 	tmplApplication := getTempApplication(applicationSetInfo.Spec.Template)
 	for _, requestedGenerator := range applicationSetInfo.Spec.Generators {
-		for _, g := range r.Generators {
+
+		generators := r.GetRelevantGenerators(&requestedGenerator)
+
+		for _, g := range generators {
 			params, err := g.GenerateParams(&requestedGenerator)
 			if err != nil {
 				log.WithError(err).WithField("generator", g).

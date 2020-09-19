@@ -134,8 +134,8 @@ func TestExtractApplications(t *testing.T) {
 				Client:   client,
 				Scheme:   scheme,
 				Recorder: record.NewFakeRecorder(1),
-				Generators: []generators.Generator{
-					&generatorMock,
+				Generators: map[string]generators.Generator{
+					"List": &generatorMock,
 				},
 				Renderer: &rendererMock,
 			}
