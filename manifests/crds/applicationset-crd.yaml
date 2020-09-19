@@ -116,12 +116,14 @@ spec:
                         type: array
                       repoURL:
                         type: string
+                      requeueAfterSeconds:
+                        format: int64
+                        type: integer
                       revision:
                         type: string
                     required:
                     - repoURL
                     - revision
-                    - requeueAfterSeconds
                     type: object
                   list:
                     description: ListGenerator include items info
