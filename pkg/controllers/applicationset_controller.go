@@ -95,7 +95,6 @@ func (r *ApplicationSetReconciler) GetRelevantGenerators(requestedGenerator *arg
 		}
 
 		if !reflect.ValueOf(field.Interface()).IsNil()  {
-			fmt.Println(reflect.Indirect(reflect.ValueOf(field.Interface())).Type())
 			res = append(res, r.Generators[v.Type().Field(i).Name])
 		}
 	}
