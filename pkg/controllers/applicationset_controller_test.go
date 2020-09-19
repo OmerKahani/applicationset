@@ -505,3 +505,50 @@ func TestDeleteInCluster(t *testing.T) {
 	}
 
 }
+
+func TestGetMinRequeueAfter(t *testing.T) {
+	scheme := runtime.NewScheme()
+	argoprojiov1alpha1.AddToScheme(scheme)
+	argov1alpha1.AddToScheme(scheme)
+
+
+	client := fake.NewFakeClientWithScheme(scheme)
+
+	generator := argoprojiov1alpha1.ApplicationSetGenerator{
+		List: &argoprojiov1alpha1.ListGenerator{},
+		Git: &argoprojiov1alpha1.GitGenerator{},
+		Clusters: &argoprojiov1alpha1.ClusterGenerator{},
+	}
+
+	generatorMock0 := generatorMock{}
+	generatorMock0.On("GetRequeueAfter", &generator).
+		Return(generators.NoRequeueAfter)
+
+	generatorMock1 := generatorMock{}
+	generatorMock1.On("GetRequeueAfter", &generator).
+		Return(time.Duration(1) * time.Second)
+
+	generatorMock10 := generatorMock{}
+	generatorMock10.On("GetRequeueAfter", &generator).
+		Return(time.Duration(10) * time.Second)
+
+	r := ApplicationSetReconciler{
+		Client:   client,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(0),
+		Generators: map[string]generators.Generator{
+			"List": &generatorMock10,
+			"Git": &generatorMock1,
+			"Clusters": &generatorMock1,
+		},
+	}
+
+
+	got := r.getMinRequeueAfter(&argoprojiov1alpha1.ApplicationSet{
+		Spec: argoprojiov1alpha1.ApplicationSetSpec{
+			Generators: []argoprojiov1alpha1.ApplicationSetGenerator{generator},
+		},
+	},)
+
+	assert.Equal(t, time.Duration(1) * time.Second, got)
+}

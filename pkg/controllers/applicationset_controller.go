@@ -80,7 +80,7 @@ func (r *ApplicationSetReconciler) Reconcile(req ctrl.Request) (ctrl.Result, err
 	}
 
 	return ctrl.Result{
-	//	RequeueAfter: getMinRequeueAfter(&applicationSetInfo),
+		RequeueAfter: r.getMinRequeueAfter(&applicationSetInfo),
 	}, nil
 }
 
@@ -112,7 +112,9 @@ func (r *ApplicationSetReconciler) getMinRequeueAfter(applicationSetInfo *argopr
 		for _, g := range generators {
 			t := g.GetRequeueAfter(&requestedGenerator)
 
-			if res != 0 && t != 0 && t < res {
+			if res == 0 {
+				res = t
+			} else if t != 0 && t < res {
 				res = t
 			}
 		}
