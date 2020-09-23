@@ -46,6 +46,7 @@ func main() {
 	var argocdRepoServer string
 	var policy string
 	var debugLog bool
+	var dryRun bool
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&metricsAddr, "probe-addr", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
@@ -55,11 +56,15 @@ func main() {
 	flag.StringVar(&argocdRepoServer, "argocd-repo-server", "argocd-repo-server:8081", "Argo CD repo server address")
 	flag.StringVar(&policy, "policy", "sync", "Modify how application is sync between the generator and the cluster. Default is sync (create & update & delete), options: create-only, create-update (no deletion)")
 	flag.BoolVar(&debugLog, "debug", false, "print debug logs")
+	flag.BoolVar(&dryRun, "dry-run", false, "Dry Run mode")
 	flag.Parse()
 
 
 
-	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+	ctrl.SetLogger(zap.New())
+
+	logger := log.New()
+	logger.SetFormatter(&log.JSONFormatter{})
 
 	policyObj, exists := utils.Policies[policy]
 	if !exists {
@@ -68,7 +73,12 @@ func main() {
 	}
   
   if debugLog {
-    log.SetLevel(log.DebugLevel)
+	  logger.SetLevel(log.DebugLevel)
+	  logger = logger.WithField("dry-run", "enabled").Logger
+  }
+
+  if dryRun {
+	  logger.Info("Dry run mode enabled")
   }
 
 	// Determine the namespace we're running in. Normally injected into the pod as an env
@@ -92,7 +102,9 @@ func main() {
 		Port:                   9443,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "58ac56fa.",
+		DryRunClient: dryRun,
 	})
+
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -110,6 +122,7 @@ func main() {
 		Scheme:      mgr.GetScheme(),
 		Recorder:    mgr.GetEventRecorderFor("applicationset-controller"),
 		Renderer: &utils.Render{},
+		Logger: logger,
     Policy: policyObj,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ApplicationSet")

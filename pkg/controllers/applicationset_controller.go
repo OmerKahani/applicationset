@@ -24,15 +24,22 @@ import (
 	argov1alpha1 "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/conversion"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/apis/core"
 	"reflect"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 	"time"
 
@@ -47,6 +54,7 @@ type ApplicationSetReconciler struct {
 	Generators map[string]generators.Generator
 	utils.Policy
 	utils.Renderer
+	*log.Logger
 }
 
 // +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch;create;update;patch;delete
@@ -55,43 +63,49 @@ type ApplicationSetReconciler struct {
 
 func (r *ApplicationSetReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
-	_ = log.WithField("applicationset", req.NamespacedName)
+	logger := r.Logger.WithField("applicationset", req.NamespacedName)
+	logger.Info("start reconcile")
 
 	var applicationSetInfo argoprojiov1alpha1.ApplicationSet
 	if err := r.Get(ctx, req.NamespacedName, &applicationSetInfo); err != nil {
 		if client.IgnoreNotFound(err) != nil {
-			log.WithField("request", req).WithError(err).Infof("unable to get ApplicationSet")
+			logger.WithField("request", req).WithError(err).Infof("unable to get ApplicationSet")
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	logger.Info("test")
+	logger.Debug("debug")
 	// desiredApplications is the main list of all expected Applications from all generators in this appset.
-	desiredApplications, err := r.generateApplications(applicationSetInfo)
+	desiredApplications, err := r.generateApplications(applicationSetInfo, logger)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	if r.Policy.Update() {
-		err = r.createOrUpdateInCluster(ctx, applicationSetInfo, desiredApplications)
+		err = r.createOrUpdateInCluster(ctx, applicationSetInfo, desiredApplications, logger)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 	} else {
-		err = r.createInCluster(ctx, applicationSetInfo, desiredApplications)
+		err = r.createInCluster(ctx, applicationSetInfo, desiredApplications, logger)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
 	if r.Policy.Delete() {
-		err = r.deleteInCluster(ctx, applicationSetInfo, desiredApplications)
+		err = r.deleteInCluster(ctx, applicationSetInfo, desiredApplications, logger)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
+	requeueAfter := r.getMinRequeueAfter(&applicationSetInfo)
+	logger.WithField("requeueAfter", requeueAfter).Info("end reconcile")
+
 	return ctrl.Result{
-		RequeueAfter: r.getMinRequeueAfter(&applicationSetInfo),
+		RequeueAfter: requeueAfter,
 	}, nil
 }
 
@@ -143,7 +157,7 @@ func getTempApplication(applicationSetTemplate argoprojiov1alpha1.ApplicationSet
 	return &tmplApplication
 }
 
-func (r *ApplicationSetReconciler) generateApplications(applicationSetInfo argoprojiov1alpha1.ApplicationSet) ([]argov1alpha1.Application, error) {
+func (r *ApplicationSetReconciler) generateApplications(applicationSetInfo argoprojiov1alpha1.ApplicationSet, logger *log.Entry) ([]argov1alpha1.Application, error) {
 	res := []argov1alpha1.Application{}
 
 	var firstError error
@@ -155,7 +169,7 @@ func (r *ApplicationSetReconciler) generateApplications(applicationSetInfo argop
 		for _, g := range generators {
 			params, err := g.GenerateParams(&requestedGenerator)
 			if err != nil {
-				log.WithError(err).WithField("generator", g).
+				logger.WithError(err).WithField("generator", fmt.Sprintf("%v", g)).
 					Error("error generating params")
 				if firstError == nil {
 					firstError = err
@@ -166,7 +180,7 @@ func (r *ApplicationSetReconciler) generateApplications(applicationSetInfo argop
 			for _, p := range params {
 				app, err := r.Renderer.RenderTemplateParams(tmplApplication, p)
 				if err != nil {
-					log.WithError(err).WithField("params", params).WithField("generator", g).
+					logger.WithError(err).WithField("params", params).WithField("generator", g).
 						Error("error generating application from params")
 					if firstError == nil {
 						firstError = err
@@ -176,8 +190,8 @@ func (r *ApplicationSetReconciler) generateApplications(applicationSetInfo argop
 				res = append(res, *app)
 			}
 
-			log.WithField("generator", g).Infof("generated %d applications", len(res))
-			log.WithField("generator", g).Debugf("apps from generator: %+v", res)
+			logger.WithField("generator", fmt.Sprintf("%v", g)).Infof("generated %d applications", len(res))
+			logger.WithField("generator", g).Debugf("apps from generator: %+v", res)
 
 		}
 	}
@@ -185,7 +199,11 @@ func (r *ApplicationSetReconciler) generateApplications(applicationSetInfo argop
 }
 
 func (r *ApplicationSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(&argov1alpha1.Application{}, ".metadata.controller", func(rawObj runtime.Object) []string {
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.TODO(),
+		&argov1alpha1.Application{},
+		".metadata.controller",
+		func(rawObj runtime.Object) []string {
 		// grab the job object, extract the owner...
 		app := rawObj.(*argov1alpha1.Application)
 		owner := metav1.GetControllerOf(app)
@@ -205,7 +223,7 @@ func (r *ApplicationSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&argoprojiov1alpha1.ApplicationSet{}).
-		Owns(&argov1alpha1.Application{}).
+		Owns(&argov1alpha1.Application{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(
 			&source.Kind{Type: &corev1.Secret{}},
 			&clusterSecretEventHandler{
@@ -220,16 +238,17 @@ func (r *ApplicationSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // For new application it will call create
 // For application that need to update it will call update
 // The function also adds owner reference to all applications, and uses it for delete them.
-func (r *ApplicationSetReconciler) createOrUpdateInCluster(ctx context.Context, applicationSet argoprojiov1alpha1.ApplicationSet, desiredApplications []argov1alpha1.Application) error {
+func (r *ApplicationSetReconciler) createOrUpdateInCluster(ctx context.Context, applicationSet argoprojiov1alpha1.ApplicationSet, desiredApplications []argov1alpha1.Application, logger *log.Entry) error {
 
 	var firstError error
 	//create or updates the application in appList
 	for _, app := range desiredApplications {
-		appLog := log.WithFields(log.Fields{"app": app.Name, "appSet": applicationSet.Name})
+		appLog := logger.WithFields(log.Fields{"app": app.Name})
 		app.Namespace = applicationSet.Namespace
 
 		found := app
-		action, err := ctrl.CreateOrUpdate(ctx, r.Client, &found, func() error {
+
+		action, err := CreateOrUpdate(ctx, r.Client, &found, func() error {
 			found.Spec = app.Spec
 			return controllerutil.SetControllerReference(&applicationSet, &found, r.Scheme)
 		})
@@ -243,15 +262,91 @@ func (r *ApplicationSetReconciler) createOrUpdateInCluster(ctx context.Context, 
 		}
 
 		r.Recorder.Eventf(&applicationSet, core.EventTypeNormal, fmt.Sprint(action), "%s Application %q", action, app.Name)
-		appLog.Logf(log.InfoLevel, "%s Application", action)
+
+		if action == controllerutil.OperationResultNone {
+			appLog.Debugf("%s Application", action)
+		} else {
+			appLog.WithField("spec", found.Spec).Infof("%s Application", action)
+		}
+
 	}
 	return firstError
+}
+
+func CreateOrUpdate(ctx context.Context, c client.Client, obj runtime.Object, f controllerutil.MutateFn) (controllerutil.OperationResult, error) {
+	key, err := client.ObjectKeyFromObject(obj)
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	if err := c.Get(ctx, key, obj); err != nil {
+		if !errors.IsNotFound(err) {
+			return controllerutil.OperationResultNone, err
+		}
+		if err := mutate(f, key, obj); err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+		if err := c.Create(ctx, obj); err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+		return controllerutil.OperationResultCreated, nil
+	}
+
+	existing := obj.DeepCopyObject()
+	if err := mutate(f, key, obj); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	equality := conversion.EqualitiesOrDie(
+		func(a, b resource.Quantity) bool {
+			// Ignore formatting, only care that numeric value stayed the same.
+			// TODO: if we decide it's important, it should be safe to start comparing the format.
+			//
+			// Uninitialized quantities are equivalent to 0 quantities.
+			return a.Cmp(b) == 0
+		},
+		func(a, b metav1.MicroTime) bool {
+			return a.UTC() == b.UTC()
+		},
+		func(a, b metav1.Time) bool {
+			return a.UTC() == b.UTC()
+		},
+		func(a, b labels.Selector) bool {
+			return a.String() == b.String()
+		},
+		func(a, b fields.Selector) bool {
+			return a.String() == b.String()
+		},
+		func (a,b argov1alpha1.ApplicationDestination) bool {
+			return a.Namespace == b.Namespace && a.Name == b.Name && a.Server == b.Server
+		},
+	)
+
+	if equality.DeepEqual(existing, obj) {
+		return controllerutil.OperationResultNone, nil
+	}
+
+	if err := c.Update(ctx, obj); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+	return controllerutil.OperationResultUpdated, nil
+}
+
+// mutate wraps a MutateFn and applies validation to its result
+func mutate(f controllerutil.MutateFn, key client.ObjectKey, obj runtime.Object) error {
+	if err := f(); err != nil {
+		return err
+	}
+	if newKey, err := client.ObjectKeyFromObject(obj); err != nil || key != newKey {
+		return fmt.Errorf("MutateFn cannot mutate object name and/or object namespace")
+	}
+	return nil
 }
 
 
 // createInCluster will filter from the desiredApplications only the application that needs to be created
 // Then it will call createOrUpdateInCluster to do the actual create
-func (r *ApplicationSetReconciler) createInCluster(ctx context.Context, applicationSet argoprojiov1alpha1.ApplicationSet, desiredApplications []argov1alpha1.Application) error {
+func (r *ApplicationSetReconciler) createInCluster(ctx context.Context, applicationSet argoprojiov1alpha1.ApplicationSet, desiredApplications []argov1alpha1.Application, logger *log.Entry) error {
 
 	var createApps []argov1alpha1.Application
 	current, err := r.getCurrentApplications(ctx,applicationSet)
@@ -274,7 +369,7 @@ func (r *ApplicationSetReconciler) createInCluster(ctx context.Context, applicat
 		}
 	}
 
-	return r.createOrUpdateInCluster(ctx, applicationSet, createApps)
+	return r.createOrUpdateInCluster(ctx, applicationSet, createApps, logger)
 }
 
 func (r *ApplicationSetReconciler) getCurrentApplications(ctx context.Context, applicationSet argoprojiov1alpha1.ApplicationSet) ([]argov1alpha1.Application, error){
@@ -290,7 +385,7 @@ func (r *ApplicationSetReconciler) getCurrentApplications(ctx context.Context, a
 
 // deleteInCluster will delete application that are current in the cluster but not in appList.
 // The function must be called after all generators had been called and generated applications
-func (r *ApplicationSetReconciler) deleteInCluster(ctx context.Context, applicationSet argoprojiov1alpha1.ApplicationSet, desiredApplications []argov1alpha1.Application) error {
+func (r *ApplicationSetReconciler) deleteInCluster(ctx context.Context, applicationSet argoprojiov1alpha1.ApplicationSet, desiredApplications []argov1alpha1.Application, logger *log.Entry) error {
 
 	// Save current applications to be able to delete the ones that are not in appList
 	current,err := r.getCurrentApplications(ctx,applicationSet)
@@ -307,7 +402,7 @@ func (r *ApplicationSetReconciler) deleteInCluster(ctx context.Context, applicat
 	// Delete apps that are not in m[string]bool
 	var firstError error
 	for _, app := range current {
-		appLog := log.WithFields(log.Fields{"app": app.Name, "appSet": applicationSet.Name})
+		appLog := logger.WithFields(log.Fields{"app": app.Name})
 		_, exists := m[app.Name]
 
 		if exists == false {

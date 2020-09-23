@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/argoproj-labs/applicationset/pkg/generators"
 	argov1alpha1 "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -156,7 +157,8 @@ func TestExtractApplications(t *testing.T) {
 					Generators: []argoprojiov1alpha1.ApplicationSetGenerator{generator},
 					Template: cc.template,
 				},
-			},)
+			},
+			&log.Logger{})
 
 			if cc.expectErr {
 				assert.Error(t, err)
@@ -183,12 +185,14 @@ func TestCreateOrUpdateInCluster(t *testing.T) {
 	argov1alpha1.AddToScheme(scheme)
 
 	for _, c := range []struct {
+		name	   string
 		appSet     argoprojiov1alpha1.ApplicationSet
 		existsApps []argov1alpha1.Application
 		apps       []argov1alpha1.Application
 		expected   []argov1alpha1.Application
 	}{
 		{
+			name: "create new application",
 			appSet: argoprojiov1alpha1.ApplicationSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "name",
@@ -218,6 +222,7 @@ func TestCreateOrUpdateInCluster(t *testing.T) {
 			},
 		},
 		{
+			name: "update the application",
 			appSet: argoprojiov1alpha1.ApplicationSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "name",
@@ -275,6 +280,7 @@ func TestCreateOrUpdateInCluster(t *testing.T) {
 			},
 		},
 		{
+			name: "create new application, without chaning the current one",
 			appSet: argoprojiov1alpha1.ApplicationSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "name",
@@ -346,7 +352,7 @@ func TestCreateOrUpdateInCluster(t *testing.T) {
 			Recorder: record.NewFakeRecorder(len(initObjs) + len(c.expected)),
 		}
 
-		r.createOrUpdateInCluster(context.TODO(), c.appSet, c.apps)
+		r.createOrUpdateInCluster(context.TODO(), c.appSet, c.apps, &log.Logger{})
 
 		for _, obj := range c.expected {
 			got := &argov1alpha1.Application{}
@@ -533,7 +539,7 @@ func TestCreateApplications(t *testing.T) {
 			Recorder: record.NewFakeRecorder(len(initObjs) + len(c.expected)),
 		}
 
-		r.createInCluster(context.TODO(), c.appSet, c.apps)
+		r.createInCluster(context.TODO(), c.appSet, c.apps, &log.Logger{})
 
 		for _, obj := range c.expected {
 			got := &argov1alpha1.Application{}
@@ -666,7 +672,7 @@ func TestDeleteInCluster(t *testing.T) {
 			Recorder: record.NewFakeRecorder(len(initObjs) + len(c.expected)),
 		}
 
-		r.deleteInCluster(context.TODO(), c.appSet, c.apps)
+		r.deleteInCluster(context.TODO(), c.appSet, c.apps, &log.Logger{})
 
 		for _, obj := range c.expected {
 			got := &argov1alpha1.Application{}
