@@ -42,7 +42,7 @@ func TestGitGenerateParams(t *testing.T) {
 	}{
 		{
 			name: "happy flow - created apps",
-			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{"*"}},
+			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{Path:"*"}},
 			repoApps: []string{
 					"app1",
 					"app2",
@@ -57,7 +57,7 @@ func TestGitGenerateParams(t *testing.T) {
 		},
 		{
 			name: "It filters application according to the paths",
-			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{"p1/*"}, {"p1/*/*"}},
+			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{Path:"p1/*"}, {Path:"p1/*/*"}},
 			repoApps: []string{
 				"app1",
 				"p1/app2",
@@ -72,8 +72,25 @@ func TestGitGenerateParams(t *testing.T) {
 			expectedError: nil,
 		},
 		{
+			name: "It filters application that have exclude in the path",
+			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{Path:"p1/app2", Exclude: true}, {Path:"p1/*"}, {Path:"p1/*/*"}},
+			repoApps: []string{
+				"app1",
+				"p1/app2",
+				"p1/app3",
+				"p1/p2/app4",
+				"p1/p2/p3/app5",
+			},
+			repoError: nil,
+			expected: []map[string]string{
+				{"path": "p1/app3", "path.basename": "app3"},
+				{"path": "p1/p2/app4", "path.basename": "app4"},
+			},
+			expectedError: nil,
+		},
+		{
 			name: "handles empty response from repo server",
-			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{"*"}},
+			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{Path:"*"}},
 			repoApps: []string{},
 			repoError: nil,
 			expected: []map[string]string{},
@@ -81,7 +98,7 @@ func TestGitGenerateParams(t *testing.T) {
 		},
 		{
 			name: "handles error from repo server",
-			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{"*"}},
+			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{Path:"*"}},
 			repoApps: []string{},
 			repoError: fmt.Errorf("error"),
 			expected: []map[string]string{},

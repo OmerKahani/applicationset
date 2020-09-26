@@ -110,6 +110,8 @@ spec:
                           properties:
                             path:
                               type: string
+                            exclude:
+                              type: boolean
                           required:
                             - path
                           type: object

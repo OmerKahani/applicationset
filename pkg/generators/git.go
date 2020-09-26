@@ -56,7 +56,8 @@ func (g *GitGenerator) GenerateParams(appSetGenerator *argoprojiov1alpha1.Applic
 }
 
 func (g *GitGenerator) filter(Directories []argoprojiov1alpha1.GitDirectoryGeneratorItem, allApps []string) []string {
-	res := []string{}
+	all := map[string]bool{}
+	excludes := []string{}
 	for _, requestedPath := range Directories {
 		for _, appPath := range allApps {
 			match, err := path.Match(requestedPath.Path, appPath)
@@ -66,10 +67,26 @@ func (g *GitGenerator) filter(Directories []argoprojiov1alpha1.GitDirectoryGener
 				continue
 			}
 			if match {
-				res = append(res, appPath)
+				if requestedPath.Exclude {
+					excludes = append(excludes, appPath)
+				} else
+				{
+					all[appPath] = true
+				}
 			}
 		}
 	}
+
+	for _, path := range excludes{
+		delete(all, path)
+	}
+
+	res := []string{}
+	for path, _ := range all {
+		res = append(res, path)
+	}
+
+
 	return res
 }
 
