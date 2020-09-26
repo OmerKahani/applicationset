@@ -59,6 +59,8 @@ func TestExtractApplications(t *testing.T) {
 
 	client := fake.NewFakeClientWithScheme(scheme)
 
+	loggger := log.Logger{}
+
 	for _, c := range []struct {
 		name				string
 		params				[]map[string]string
@@ -158,7 +160,7 @@ func TestExtractApplications(t *testing.T) {
 					Template: cc.template,
 				},
 			},
-			&log.Logger{})
+			loggger.WithField("f", "f"))
 
 			if cc.expectErr {
 				assert.Error(t, err)
@@ -183,6 +185,8 @@ func TestCreateOrUpdateInCluster(t *testing.T) {
 	scheme := runtime.NewScheme()
 	argoprojiov1alpha1.AddToScheme(scheme)
 	argov1alpha1.AddToScheme(scheme)
+
+
 
 	for _, c := range []struct {
 		name	   string
@@ -352,7 +356,8 @@ func TestCreateOrUpdateInCluster(t *testing.T) {
 			Recorder: record.NewFakeRecorder(len(initObjs) + len(c.expected)),
 		}
 
-		r.createOrUpdateInCluster(context.TODO(), c.appSet, c.apps, &log.Logger{})
+		logger := log.Logger{}
+		r.createOrUpdateInCluster(context.TODO(), c.appSet, c.apps, logger.WithField("f", "f"))
 
 		for _, obj := range c.expected {
 			got := &argov1alpha1.Application{}
@@ -539,7 +544,8 @@ func TestCreateApplications(t *testing.T) {
 			Recorder: record.NewFakeRecorder(len(initObjs) + len(c.expected)),
 		}
 
-		r.createInCluster(context.TODO(), c.appSet, c.apps, &log.Logger{})
+		logger := log.Logger{}
+		r.createInCluster(context.TODO(), c.appSet, c.apps, logger.WithField("f", "f"))
 
 		for _, obj := range c.expected {
 			got := &argov1alpha1.Application{}
@@ -672,7 +678,8 @@ func TestDeleteInCluster(t *testing.T) {
 			Recorder: record.NewFakeRecorder(len(initObjs) + len(c.expected)),
 		}
 
-		r.deleteInCluster(context.TODO(), c.appSet, c.apps, &log.Logger{})
+		logger := log.Logger{}
+		r.deleteInCluster(context.TODO(), c.appSet, c.apps, logger.WithField("f", "f"))
 
 		for _, obj := range c.expected {
 			got := &argov1alpha1.Application{}
