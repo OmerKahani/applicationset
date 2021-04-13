@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cluster-addons
+spec:
+  generators:
+  - git:
+      repoURL: https://github.com/infra-team/cluster-deployments.git
+      directories:
+      - path: add-ons/*
+      - path: add-ons/app1
+        exclude: true
+  template:
+    metadata:
+      name: '{{path.basename}}'
+    spec:
+      source:
+        repoURL: https://github.com/infra-team/cluster-deployments.git
+        targetRevision: HEAD
+        path: '{{path}}'
+      destination:
+        server: http://kubernetes.default.svc
+        namespace: '{{path.basename}}'
