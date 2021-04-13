@@ -72,7 +72,7 @@ func TestGitGenerateParamsFromDirectories(t *testing.T) {
 			expectedError: nil,
 		},
 		{
-			name:        "happy flow - exclude apps",
+			name:        "happy flow - it excludes paths that are have exclude true",
 			directories: []argoprojiov1alpha1.GitDirectoryGeneratorItem{{Path: "*"}, {Path: "p1/*"}, {Path: "exclude_app", Exclude: true}, {Path: "p1/exclude_app", Exclude: true}},
 			repoApps: []string{
 				"app1",
@@ -83,9 +83,9 @@ func TestGitGenerateParamsFromDirectories(t *testing.T) {
 			},
 			repoError: nil,
 			expected: []map[string]string{
+				{"path": "p1/app1", "path.basename": "app1"},
 				{"path": "app1", "path.basename": "app1"},
 				{"path": "app2", "path.basename": "app2"},
-				{"path": "p1/app1", "path.basename": "app1"},
 			},
 			expectedError: nil,
 		},
